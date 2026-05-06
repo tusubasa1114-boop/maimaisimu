@@ -5,17 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>maimai Simulator - Scroll Fixed</title>
     <style>
+        /* スクロールを絶対に許可する設定 */
+        html, body {
+            overflow-y: auto !important;
+            height: auto !important;
+            margin: 0;
+            background: #111;
+            color: white;
+            font-family: sans-serif;
+        }
+
         body { 
-            background: #111; 
-            color: white; 
             display: flex; 
             flex-direction: column; 
             align-items: center; 
-            font-family: sans-serif; 
-            margin: 0; 
-            /* スクロールを許可 */
-            overflow-y: auto;
-            min-height: 100vh;
+            min-height: 120vh; /* スクロールできる高さを強制的に確保 */
         }
 
         #game-container { 
@@ -23,8 +27,8 @@
             width: min(95vw, 650px); 
             height: min(95vw, 650px); 
             margin-top: 10px; 
-            /* ブラウザの標準的な操作（スクロール）を維持しつつダブルタップズーム等を抑制 */
-            touch-action: manipulation; 
+            /* ズームだけ禁止してスクロールはブラウザに任せる */
+            touch-action: pan-y; 
             flex-shrink: 0;
         }
 
@@ -38,7 +42,7 @@
         }
 
         #ui { 
-            margin: 20px 0 80px 0; /* 下にしっかり余白を作る */
+            margin: 20px 0 100px 0; 
             width: min(95vw, 600px); 
             background: #222; 
             padding: 15px; 
@@ -56,7 +60,6 @@
             font-family: monospace; 
             box-sizing: border-box; 
             font-size: 14px; 
-            resize: vertical; 
         }
 
         .controls { 
@@ -88,7 +91,7 @@
     <textarea id="simai-input">(160){4} 1h[2:1], 3h[1:1], 5-1[2:1], 6>2[2:1], 7pp3[2:1], E</textarea>
     <div class="controls">
         <button id="start-btn">再生 (START)</button>
-        <div style="font-size: 11px; color: #888;">判定エリア以外でスクロール可能</div>
+        <div style="font-size: 11px; color: #888;">真ん中をなぞればスクロールできます</div>
     </div>
 </div>
 
@@ -173,16 +176,16 @@ function handleInput(e) {
     const rect = canvas.getBoundingClientRect();
     const touches = e.touches ? Array.from(e.touches) : [e];
     
-    let isGameplayTouch = false;
+    let handled = false;
 
     touches.forEach(t => {
         const x = (t.clientX - rect.left) * (800 / rect.width) - 400;
         const y = (t.clientY - rect.top) * (800 / rect.height) - 400;
-        
-        // 判定エリア（外周付近）を触っているかチェック
         const dist = Math.sqrt(x*x + y*y);
+
+        // 半径200以上（外周）を触った時だけ、ゲームの判定として処理
         if (dist > 180 && dist < 450) {
-            isGameplayTouch = true;
+            handled = true;
             const angle = Math.atan2(y, x) * 180 / Math.PI;
             let pos = 0;
             const normalizedAngle = angle < -78.75 ? angle + 360 : angle;
@@ -193,13 +196,13 @@ function handleInput(e) {
         }
     });
 
-    // ゲーム用の操作（外周タッチ）の時だけ、ブラウザのスクロールを止める
-    if (isGameplayTouch && e.cancelable) {
+    // 「外周を触った」かつ「タップ操作だった」場合のみ、ブラウザの動き（スクロール等）を止める
+    // 中央部分をなぞった場合は handled が false なので、通常通りスクロールする
+    if (handled && e.cancelable) {
         e.preventDefault();
     }
 }
 
-// パッシブをfalseにすることで、必要な時だけスクロールを止められるようにする
 canvas.addEventListener('touchstart', handleInput, {passive: false});
 canvas.addEventListener('mousedown', handleInput);
 
