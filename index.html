@@ -2,36 +2,35 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>maimai Simulator - Fix</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>maimai Simulator - Safari Fixed</title>
     <style>
-        /* ページ全体をスクロール可能に強制 */
-        html, body {
-            margin: 0;
-            padding: 0;
-            background: #111;
-            color: white;
-            font-family: sans-serif;
-            overflow-x: hidden;
-            overflow-y: auto !important; /* スクロールを許可 */
-            -webkit-overflow-scrolling: touch; /* iOS用スムーズスクロール */
+        /* Safariのバウンス（画面端の跳ね返り）を抑制しつつスクロールを許可 */
+        html {
+            overflow-y: scroll;
+            -webkit-text-size-adjust: 100%;
         }
 
         body { 
+            background: #111; 
+            color: white; 
             display: flex; 
             flex-direction: column; 
             align-items: center; 
-            padding-bottom: 100px; /* 下に余白 */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            margin: 0; 
+            padding: 20px 0 100px 0;
+            min-height: 100vh;
         }
 
         #game-container { 
             position: relative; 
             width: min(95vw, 650px); 
             height: min(95vw, 650px); 
-            margin: 20px auto; 
-            flex-shrink: 0;
-            /* touch-actionをautoにすることで、ブラウザのスクロールを優先 */
+            margin-bottom: 30px;
+            /* touch-action: noneをやめ、autoにする */
             touch-action: auto; 
+            flex-shrink: 0;
         }
 
         canvas { 
@@ -41,13 +40,15 @@
             height: 100%; 
             display: block;
             box-shadow: 0 0 20px rgba(0,255,255,0.2);
+            /* iOS Safariでのタップ時のハイライトを消す */
+            -webkit-tap-highlight-color: transparent;
         }
 
         #ui { 
             width: min(90vw, 600px); 
             background: #222; 
             padding: 20px; 
-            border-radius: 10px; 
+            border-radius: 12px; 
             box-sizing: border-box; 
         }
 
@@ -57,25 +58,28 @@
             background: #333; 
             color: #fff; 
             border: 1px solid #555; 
-            font-family: monospace; 
-            font-size: 16px; /* スマホでズームされないサイズ */
+            font-family: Menlo, Monaco, Consolas, "Courier New", monospace; 
+            font-size: 16px; 
             box-sizing: border-box;
+            border-radius: 8px;
+            padding: 10px;
         }
 
         .controls { 
             margin-top: 15px; 
             display: flex; 
-            justify-content: space-between; 
+            justify-content: center; 
         }
 
         button { 
-            padding: 15px 30px; 
+            padding: 15px 40px; 
             background: #0088ff; 
             color: white; 
             border: none; 
-            border-radius: 8px; 
+            border-radius: 10px; 
             font-weight: bold; 
             font-size: 18px; 
+            cursor: pointer;
         }
     </style>
 </head>
@@ -86,21 +90,18 @@
 </div>
 
 <div id="ui">
-    <textarea id="simai-input">(160){4} 1h[2:1], 3h[1:1], 5-1[2:1], 6>2[2:1], 7pp3[2:1], E</textarea>
+    <textarea id="simai-input">(160){4} 1,2,3,4,5,6,7,8,E</textarea>
     <div class="controls">
         <button id="start-btn">再生 (START)</button>
     </div>
-    <p style="font-size: 12px; color: #aaa; margin-top: 10px;">
-        ※画面の真ん中あたりをスワイプすると上下に動かせます。
+    <p style="font-size: 13px; color: #888; text-align: center; margin-top: 15px;">
+        画面の余白や、キャンバスの中央をスワイプしてスクロールしてください。
     </p>
 </div>
 
 <script>
 const ASSETS_LIST = {
-    outline: 'outline.png', tap: 'tap.png', break: 'tap_break.png',
-    each: 'tap_each.png', hold: 'hold.png', star: 'star.png', slide: 'slide.png',
-    perfect: 'judge_text_perfect.png', great: 'judge_text_great.png',
-    good: 'judge_text_good.png', miss: 'judge_text_miss.png'
+    outline: 'outline.png', tap: 'tap.png', perfect: 'judge_text_perfect.png'
 };
 
 const ANGLES = [0, -67.5, -22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5];
@@ -112,7 +113,6 @@ let effects = [];
 let startTime = 0;
 let isPlaying = false;
 
-// 画像読み込み
 async function loadImages() {
     for (const [name, url] of Object.entries(ASSETS_LIST)) {
         const img = new Image();
@@ -128,61 +128,70 @@ function drawBase() {
     if (images.outline) ctx.drawImage(images.outline, 0, 0, 800, 800);
 }
 
-// 入力処理（スクロールを邪魔しない版）
-function handleInput(e) {
-    const rect = canvas.getBoundingClientRect();
-    const touch = e.touches ? e.touches[0] : e;
-    
-    const x = (touch.clientX - rect.left) * (800 / rect.width) - 400;
-    const y = (touch.clientY - rect.top) * (800 / rect.height) - 400;
-    const dist = Math.sqrt(x*x + y*y);
-
-    // 外周（ボタン付近）を触った時だけ反応
-    if (dist > 200 && dist < 450) {
-        const angle = Math.atan2(y, x) * 180 / Math.PI;
-        const normAngle = angle < -78.75 ? angle + 360 : angle;
-        let pos = 0;
-        for (let i = 1; i <= 8; i++) {
-            if (Math.abs(normAngle - ANGLES[i]) < 22.5) { pos = i; break; }
-        }
-        if (pos > 0) judge(pos);
-    }
-}
-
 // 判定ロジック
 function judge(pos) {
     if (!isPlaying) return;
     const now = performance.now() - startTime;
-    const hitNote = notes.find(n => !n.hit && Math.abs(n.time - now) < 250 && (n.pos === pos || n.start === pos));
+    const hitNote = notes.find(n => !n.hit && Math.abs(n.time - now) < 200 && n.pos === pos);
     if (hitNote) {
         hitNote.hit = true;
-        effects.push({ img: images.perfect, angle: ANGLES[pos] * Math.PI / 180, startTime: performance.now() });
+        effects.push({ angle: ANGLES[pos] * Math.PI / 180, startTime: performance.now() });
     }
 }
 
-// ここで preventDefault を使わないことでスクロールを維持
-canvas.addEventListener('touchstart', handleInput);
-canvas.addEventListener('mousedown', handleInput);
+// タッチイベントの管理
+function handleTouch(e) {
+    const rect = canvas.getBoundingClientRect();
+    const touches = e.changedTouches ? Array.from(e.changedTouches) : [e];
+    
+    let isGameplay = false;
+
+    touches.forEach(t => {
+        const scaleX = 800 / rect.width;
+        const scaleY = 800 / rect.height;
+        const x = (t.clientX - rect.left) * scaleX - 400;
+        const y = (t.clientY - rect.top) * scaleY - 400;
+        const dist = Math.sqrt(x*x + y*y);
+
+        // 外周付近（ボタンエリア）を触った場合のみ反応
+        if (dist > 220 && dist < 450) {
+            isGameplay = true;
+            const angle = Math.atan2(y, x) * 180 / Math.PI;
+            const normAngle = angle < -78.75 ? angle + 360 : angle;
+            
+            for (let i = 1; i <= 8; i++) {
+                if (Math.abs(normAngle - ANGLES[i]) < 22.5) {
+                    judge(i);
+                    break;
+                }
+            }
+        }
+    });
+
+    // ゲームエリア（外周）を叩いた時だけ、スクロールやズームを止める
+    // 中央付近を触っているときはブラウザに任せる（スクロールできる）
+    if (isGameplay && e.cancelable) {
+        e.preventDefault();
+    }
+}
+
+// Safariでの挙動を安定させるため passive: false を指定
+canvas.addEventListener('touchstart', handleTouch, { passive: false });
+canvas.addEventListener('mousedown', handleTouch);
 
 document.getElementById('start-btn').addEventListener('click', () => {
-    notes = parseSimai(document.getElementById('simai-input').value);
+    const input = document.getElementById('simai-input').value;
+    notes = [];
+    let curTime = 1000;
+    input.replace(/\s+/g, '').split(',').forEach(t => {
+        const m = t.match(/[1-8]/);
+        if (m) notes.push({ type: 'tap', time: curTime, pos: parseInt(m[0]), hit: false });
+        curTime += 500;
+    });
     startTime = performance.now();
     isPlaying = true;
     requestAnimationFrame(update);
 });
-
-// 解析（簡易版）
-function parseSimai(text) {
-    const parsed = [];
-    let curTime = 1000;
-    text.replace(/\s+/g, '').split(',').forEach(token => {
-        if (token.match(/[1-8]/)) {
-            parsed.push({ type: 'tap', time: curTime, pos: parseInt(token[0]) });
-        }
-        curTime += 500;
-    });
-    return parsed;
-}
 
 function update(now) {
     if (!isPlaying) return;
@@ -191,19 +200,29 @@ function update(now) {
     
     notes.forEach(n => {
         const diff = n.time - elapsed;
-        if (diff > -200 && diff < 1000 && !n.hit) {
-            const p = 1 - (diff / 1000);
+        if (diff > -200 && diff < 1200 && !n.hit) {
+            const p = 1 - (diff / 1200);
             const sA = ANGLES[n.pos] * Math.PI / 180;
-            ctx.drawImage(images.tap, 400 + Math.cos(sA)*350*p - 40, 400 + Math.sin(sA)*350*p - 40, 80, 80);
+            if (images.tap) {
+                ctx.save();
+                ctx.translate(400 + Math.cos(sA)*350*p, 400 + Math.sin(sA)*350*p);
+                ctx.rotate(sA + Math.PI/2);
+                ctx.drawImage(images.tap, -40, -40, 80, 80);
+                ctx.restore();
+            }
         }
     });
 
     effects = effects.filter(e => {
-        const age = (performance.now() - e.startTime) / 500;
+        const age = (performance.now() - e.startTime) / 400;
         if (age >= 1) return false;
+        ctx.save();
         ctx.globalAlpha = 1 - age;
-        ctx.drawImage(e.img, 400 + Math.cos(e.angle)*300 - 50, 400 + Math.sin(e.angle)*300 - 25, 100, 50);
-        ctx.globalAlpha = 1.0;
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(400 + Math.cos(e.angle)*350, 400 + Math.sin(e.angle)*350, 30 + age*20, 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
         return true;
     });
 
@@ -213,4 +232,5 @@ function update(now) {
 loadImages();
 </script>
 </body>
+</html>
 </html>
