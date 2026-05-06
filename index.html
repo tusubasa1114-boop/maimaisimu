@@ -2,82 +2,80 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>maimai Simulator - Scroll Fixed</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>maimai Simulator - Fix</title>
     <style>
-        /* スクロールを絶対に許可する設定 */
+        /* ページ全体をスクロール可能に強制 */
         html, body {
-            overflow-y: auto !important;
-            height: auto !important;
             margin: 0;
+            padding: 0;
             background: #111;
             color: white;
             font-family: sans-serif;
+            overflow-x: hidden;
+            overflow-y: auto !important; /* スクロールを許可 */
+            -webkit-overflow-scrolling: touch; /* iOS用スムーズスクロール */
         }
 
         body { 
             display: flex; 
             flex-direction: column; 
             align-items: center; 
-            min-height: 120vh; /* スクロールできる高さを強制的に確保 */
+            padding-bottom: 100px; /* 下に余白 */
         }
 
         #game-container { 
             position: relative; 
             width: min(95vw, 650px); 
             height: min(95vw, 650px); 
-            margin-top: 10px; 
-            /* ズームだけ禁止してスクロールはブラウザに任せる */
-            touch-action: pan-y; 
+            margin: 20px auto; 
             flex-shrink: 0;
+            /* touch-actionをautoにすることで、ブラウザのスクロールを優先 */
+            touch-action: auto; 
         }
 
         canvas { 
             background: black; 
             border-radius: 50%; 
-            box-shadow: 0 0 30px rgba(0,255,255,0.3); 
             width: 100%; 
             height: 100%; 
             display: block;
+            box-shadow: 0 0 20px rgba(0,255,255,0.2);
         }
 
         #ui { 
-            margin: 20px 0 100px 0; 
-            width: min(95vw, 600px); 
+            width: min(90vw, 600px); 
             background: #222; 
-            padding: 15px; 
+            padding: 20px; 
             border-radius: 10px; 
             box-sizing: border-box; 
-            z-index: 100;
         }
 
         textarea { 
             width: 100%; 
-            height: 100px; 
+            height: 120px; 
             background: #333; 
             color: #fff; 
             border: 1px solid #555; 
             font-family: monospace; 
-            box-sizing: border-box; 
-            font-size: 14px; 
+            font-size: 16px; /* スマホでズームされないサイズ */
+            box-sizing: border-box;
         }
 
         .controls { 
-            margin-top: 10px; 
+            margin-top: 15px; 
             display: flex; 
             justify-content: space-between; 
-            align-items: center; 
         }
 
         button { 
-            padding: 12px 25px; 
+            padding: 15px 30px; 
             background: #0088ff; 
-            border: none; 
             color: white; 
-            border-radius: 5px; 
-            cursor: pointer; 
+            border: none; 
+            border-radius: 8px; 
             font-weight: bold; 
-            font-size: 16px; 
+            font-size: 18px; 
         }
     </style>
 </head>
@@ -91,8 +89,10 @@
     <textarea id="simai-input">(160){4} 1h[2:1], 3h[1:1], 5-1[2:1], 6>2[2:1], 7pp3[2:1], E</textarea>
     <div class="controls">
         <button id="start-btn">再生 (START)</button>
-        <div style="font-size: 11px; color: #888;">真ん中をなぞればスクロールできます</div>
     </div>
+    <p style="font-size: 12px; color: #aaa; margin-top: 10px;">
+        ※画面の真ん中あたりをスワイプすると上下に動かせます。
+    </p>
 </div>
 
 <script>
@@ -103,10 +103,7 @@ const ASSETS_LIST = {
     good: 'judge_text_good.png', miss: 'judge_text_miss.png'
 };
 
-const NOTE_SPEED = 6.0;
-const APPEAR_DURATION = 4200 / NOTE_SPEED; 
 const ANGLES = [0, -67.5, -22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5];
-
 const images = {};
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -115,16 +112,14 @@ let effects = [];
 let startTime = 0;
 let isPlaying = false;
 
+// 画像読み込み
 async function loadImages() {
-    const loader = Object.entries(ASSETS_LIST).map(([name, url]) => {
-        return new Promise(resolve => {
-            const img = new Image();
-            img.onload = () => { images[name] = img; resolve(); };
-            img.onerror = () => resolve();
-            img.src = url; 
-        });
-    });
-    await Promise.all(loader);
+    for (const [name, url] of Object.entries(ASSETS_LIST)) {
+        const img = new Image();
+        img.src = url;
+        await new Promise(r => img.onload = r);
+        images[name] = img;
+    }
     drawBase();
 }
 
@@ -133,112 +128,58 @@ function drawBase() {
     if (images.outline) ctx.drawImage(images.outline, 0, 0, 800, 800);
 }
 
-function getSlidePos(n, p) {
-    const r = 350;
-    const sA = ANGLES[n.start] * Math.PI / 180;
-    const eA = ANGLES[n.end] * Math.PI / 180;
-    if (n.slideType === '>') {
-        let diff = eA - sA;
-        while (diff < 0) diff += Math.PI * 2;
-        const currentA = sA + diff * p;
-        return { x: 400 + Math.cos(currentA) * r, y: 400 + Math.sin(currentA) * r, rot: currentA + Math.PI/2 };
-    } else if (n.slideType === 'pp') {
-        if (p < 0.5) {
-            const t = p * 2;
-            return { x: 400 + Math.cos(sA)*r*(1-t), y: 400 + Math.sin(sA)*r*(1-t), rot: sA };
-        } else {
-            const t = (p - 0.5) * 2;
-            return { x: 400 + Math.cos(eA)*r*t, y: 400 + Math.sin(eA)*r*t, rot: eA };
+// 入力処理（スクロールを邪魔しない版）
+function handleInput(e) {
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches ? e.touches[0] : e;
+    
+    const x = (touch.clientX - rect.left) * (800 / rect.width) - 400;
+    const y = (touch.clientY - rect.top) * (800 / rect.height) - 400;
+    const dist = Math.sqrt(x*x + y*y);
+
+    // 外周（ボタン付近）を触った時だけ反応
+    if (dist > 200 && dist < 450) {
+        const angle = Math.atan2(y, x) * 180 / Math.PI;
+        const normAngle = angle < -78.75 ? angle + 360 : angle;
+        let pos = 0;
+        for (let i = 1; i <= 8; i++) {
+            if (Math.abs(normAngle - ANGLES[i]) < 22.5) { pos = i; break; }
         }
+        if (pos > 0) judge(pos);
     }
-    return {
-        x: 400 + Math.cos(sA)*r*(1-p) + Math.cos(eA)*r*p,
-        y: 400 + Math.sin(sA)*r*(1-p) + Math.sin(eA)*r*p,
-        rot: Math.atan2(Math.sin(eA)-Math.sin(sA), Math.cos(eA)-Math.cos(sA))
-    };
 }
 
+// 判定ロジック
 function judge(pos) {
     if (!isPlaying) return;
     const now = performance.now() - startTime;
     const hitNote = notes.find(n => !n.hit && Math.abs(n.time - now) < 250 && (n.pos === pos || n.start === pos));
     if (hitNote) {
         hitNote.hit = true;
-        const diff = Math.abs(hitNote.time - now);
-        let img = images.good;
-        if (diff < 60) img = images.perfect;
-        else if (diff < 120) img = images.great;
-        effects.push({ img: img, angle: ANGLES[pos] * Math.PI / 180, startTime: performance.now() });
+        effects.push({ img: images.perfect, angle: ANGLES[pos] * Math.PI / 180, startTime: performance.now() });
     }
 }
 
-function handleInput(e) {
-    const rect = canvas.getBoundingClientRect();
-    const touches = e.touches ? Array.from(e.touches) : [e];
-    
-    let handled = false;
-
-    touches.forEach(t => {
-        const x = (t.clientX - rect.left) * (800 / rect.width) - 400;
-        const y = (t.clientY - rect.top) * (800 / rect.height) - 400;
-        const dist = Math.sqrt(x*x + y*y);
-
-        // 半径200以上（外周）を触った時だけ、ゲームの判定として処理
-        if (dist > 180 && dist < 450) {
-            handled = true;
-            const angle = Math.atan2(y, x) * 180 / Math.PI;
-            let pos = 0;
-            const normalizedAngle = angle < -78.75 ? angle + 360 : angle;
-            for (let i = 1; i <= 8; i++) {
-                if (Math.abs(normalizedAngle - ANGLES[i]) < 22.5) { pos = i; break; }
-            }
-            if (pos > 0) judge(pos);
-        }
-    });
-
-    // 「外周を触った」かつ「タップ操作だった」場合のみ、ブラウザの動き（スクロール等）を止める
-    // 中央部分をなぞった場合は handled が false なので、通常通りスクロールする
-    if (handled && e.cancelable) {
-        e.preventDefault();
-    }
-}
-
-canvas.addEventListener('touchstart', handleInput, {passive: false});
+// ここで preventDefault を使わないことでスクロールを維持
+canvas.addEventListener('touchstart', handleInput);
 canvas.addEventListener('mousedown', handleInput);
 
 document.getElementById('start-btn').addEventListener('click', () => {
     notes = parseSimai(document.getElementById('simai-input').value);
-    effects = [];
     startTime = performance.now();
     isPlaying = true;
     requestAnimationFrame(update);
 });
 
+// 解析（簡易版）
 function parseSimai(text) {
     const parsed = [];
     let curTime = 1000;
-    let bpm = 160;
-    let div = 4;
-    const tokens = text.replace(/\s+/g, '').split(',');
-    tokens.forEach(token => {
-        const beatMs = (60 / bpm) * 1000;
-        const unitMs = beatMs * 4 * (1 / div);
-        const sMatch = token.match(/([1-8])([-|>|pp]+)([1-8])\[(\d+):(\d+)\]/);
-        const hMatch = token.match(/([1-8])h\[(\d+):(\d+)\]/);
-        if (sMatch) {
-            const slideDuration = beatMs * 4 * (parseInt(sMatch[5]) / parseInt(sMatch[4]));
-            parsed.push({ type: 'slide', slideType: sMatch[2], time: curTime, start: parseInt(sMatch[1]), end: parseInt(sMatch[3]), wait: beatMs, duration: slideDuration });
-        } else if (hMatch) {
-            const holdDuration = beatMs * 4 * (parseInt(hMatch[3]) / parseInt(hMatch[2]));
-            parsed.push({ type: 'hold', time: curTime, pos: parseInt(hMatch[1]), duration: holdDuration, endTime: curTime + holdDuration });
-        } else if (token.match(/[1-8]/)) {
-            const posList = token.split('/');
-            posList.forEach(p => {
-                const m = p.match(/[1-8]/);
-                if (m) parsed.push({ type: 'tap', time: curTime, pos: parseInt(m[0]), each: posList.length > 1 });
-            });
+    text.replace(/\s+/g, '').split(',').forEach(token => {
+        if (token.match(/[1-8]/)) {
+            parsed.push({ type: 'tap', time: curTime, pos: parseInt(token[0]) });
         }
-        curTime += unitMs;
+        curTime += 500;
     });
     return parsed;
 }
@@ -247,75 +188,26 @@ function update(now) {
     if (!isPlaying) return;
     const elapsed = now - startTime;
     drawBase();
-
+    
     notes.forEach(n => {
         const diff = n.time - elapsed;
-        const sA = ANGLES[n.start || n.pos] * Math.PI / 180;
-        const r = 350;
-
-        if (n.type === 'tap' && !n.hit) {
-            const p = 1 - (diff / APPEAR_DURATION);
-            if (p >= 0 && diff > -200) drawRot(n.each ? images.each : images.tap, 400 + Math.cos(sA)*r*p, 400 + Math.sin(sA)*r*p, sA + Math.PI/2, 80);
-        } 
-        else if (n.type === 'hold') {
-            const pStart = 1 - ((n.time - elapsed) / APPEAR_DURATION);
-            const pEnd = 1 - ((n.endTime - elapsed) / APPEAR_DURATION);
-            
-            if (pStart >= 0 && elapsed <= n.endTime) {
-                const startR = (elapsed < n.time) ? r * pStart : r;
-                const endR = r * Math.max(0, pEnd);
-
-                ctx.save();
-                ctx.beginPath();
-                ctx.lineWidth = 70;
-                ctx.lineCap = "round";
-                ctx.strokeStyle = "rgba(255, 100, 200, 0.8)";
-                ctx.moveTo(400 + Math.cos(sA) * endR, 400 + Math.sin(sA) * endR);
-                ctx.lineTo(400 + Math.cos(sA) * startR, 400 + Math.sin(sA) * startR);
-                ctx.stroke();
-
-                drawRot(images.hold, 400 + Math.cos(sA) * startR, 400 + Math.sin(sA) * startR, sA + Math.PI/2, 85);
-                ctx.restore();
-            }
-        }
-        else if (n.type === 'slide') {
-            const moveStartTime = n.time + n.wait;
-            if (diff < APPEAR_DURATION && elapsed < moveStartTime + n.duration) {
-                for(let i=1; i<=10; i++) {
-                    const pos = getSlidePos(n, i/10);
-                    drawRot(images.slide, pos.x, pos.y, pos.rot, 50);
-                }
-            }
-            if (elapsed >= n.time && elapsed <= moveStartTime + n.duration) {
-                let p = 0; if (elapsed > moveStartTime) p = Math.min(1, (elapsed - moveStartTime) / n.duration);
-                const sPos = getSlidePos(n, p);
-                drawRot(images.star, sPos.x, sPos.y, elapsed/200, 90);
-            }
+        if (diff > -200 && diff < 1000 && !n.hit) {
+            const p = 1 - (diff / 1000);
+            const sA = ANGLES[n.pos] * Math.PI / 180;
+            ctx.drawImage(images.tap, 400 + Math.cos(sA)*350*p - 40, 400 + Math.sin(sA)*350*p - 40, 80, 80);
         }
     });
 
     effects = effects.filter(e => {
-        const age = (performance.now() - e.startTime) / 1000;
-        if (age > 0.6 || !e.img) return false;
-        const dist = 280;
-        ctx.save();
-        ctx.translate(400 + Math.cos(e.angle)*dist, 400 + Math.sin(e.angle)*dist);
-        ctx.rotate(e.angle + Math.PI/2);
-        ctx.globalAlpha = 1 - (age * 1.5);
-        const w = 120; const h = w * (e.img.height / e.img.width);
-        ctx.drawImage(e.img, -w/2, -h/2, w, h);
-        ctx.restore();
+        const age = (performance.now() - e.startTime) / 500;
+        if (age >= 1) return false;
+        ctx.globalAlpha = 1 - age;
+        ctx.drawImage(e.img, 400 + Math.cos(e.angle)*300 - 50, 400 + Math.sin(e.angle)*300 - 25, 100, 50);
+        ctx.globalAlpha = 1.0;
         return true;
     });
 
     requestAnimationFrame(update);
-}
-
-function drawRot(img, x, y, rot, size) {
-    if (!img) return;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
-    ctx.drawImage(img, -size/2, -size/2, size, size);
-    ctx.restore();
 }
 
 loadImages();
