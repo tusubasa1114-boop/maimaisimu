@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>maimai Simulator - Smooth Hold Update</title>
+    <style>
+        body { background: #111; color: white; display: flex; flex-direction: column; align-items: center; font-family: sans-serif; margin: 0; overflow: hidden; touch-action: none; }
+        #game-container { position: relative; width: min(95vw, 650px); height: min(95vw, 650px); margin-top: 10px; }
+        canvas { background: black; border-radius: 50%; box-shadow: 0 0 30px rgba(0,255,255,0.3); width: 100%; height: 100%; }
+        #ui { margin-top: 10px; width: min(95vw, 600px); background: #222; padding: 15px; border-radius: 10px; box-sizing: border-box; z-index: 100; }
+        textarea { width: 100%; height: 60px; background: #333; color: #fff; border: 1px solid #555; font-family: monospace; box-sizing: border-box; font-size: 12px; resize: none; }
+        .controls { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
+        button { padding: 12px 25px; background: #0088ff; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="canvas" width="800" height="800"></canvas>
+</div>
+
+<div id="ui">
+    <textarea id="simai-input">(160){4} 1h[2:1], 3h[1:1], 5-1[2:1], 6>2[2:1], 7pp3[2:1], E</textarea>
+    <div class="controls">
+        <button id="start-btn">再生 (START)</button>
+        <div style="font-size: 11px; color: #888;">Hold: Line & Cap Rendering</div>
+    </div>
+</div>
+
+<script>
+const ASSETS_LIST = {
+    outline: 'outline.png', tap: 'tap.png', break: 'tap_break.png',
+    each: 'tap_each.png', hold: 'hold.png', star: 'star.png', slide: 'slide.png',
+    perfect: 'judge_text_perfect.png', great: 'judge_text_great.png',
+    good: 'judge_text_good.png', miss: 'judge_text_miss.png'
+};
+
+const NOTE_SPEED = 6.0;
+const APPEAR_DURATION = 4200 / NOTE_SPEED; 
+const ANGLES = [0, -67.5, -22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5];
+
+const images = {};
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let notes = [];
+let effects = [];
+let startTime = 0;
+let isPlaying = false;
+
+async function loadImages() {
+    const loader = Object.entries(ASSETS_LIST).map(([name, url]) => {
+        return new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => { images[name] = img; resolve(); };
+            img.onerror = () => resolve();
+            img.src = url; 
+        });
+    });
+    await Promise.all(loader);
+    drawBase();
+}
+
+function drawBase() {
+    ctx.clearRect(0, 0, 800, 800);
+    if (images.outline) ctx.drawImage(images.outline, 0, 0, 800, 800);
+}
+
+function getSlidePos(n, p) {
+    const r = 350;
+    const sA = ANGLES[n.start] * Math.PI / 180;
+    const eA = ANGLES[n.end] * Math.PI / 180;
+    if (n.slideType === '>') {
+        let diff = eA - sA;
+        while (diff < 0) diff += Math.PI * 2;
+        const currentA = sA + diff * p;
+        return { x: 400 + Math.cos(currentA) * r, y: 400 + Math.sin(currentA) * r, rot: currentA + Math.PI/2 };
+    } else if (n.slideType === 'pp') {
+        if (p < 0.5) {
+            const t = p * 2;
+            return { x: 400 + Math.cos(sA)*r*(1-t), y: 400 + Math.sin(sA)*r*(1-t), rot: sA };
+        } else {
+            const t = (p - 0.5) * 2;
+            return { x: 400 + Math.cos(eA)*r*t, y: 400 + Math.sin(eA)*r*t, rot: eA };
+        }
+    }
+    return {
+        x: 400 + Math.cos(sA)*r*(1-p) + Math.cos(eA)*r*p,
+        y: 400 + Math.sin(sA)*r*(1-p) + Math.sin(eA)*r*p,
+        rot: Math.atan2(Math.sin(eA)-Math.sin(sA), Math.cos(eA)-Math.cos(sA))
+    };
+}
+
+function judge(pos) {
+    if (!isPlaying) return;
+    const now = performance.now() - startTime;
+    const hitNote = notes.find(n => !n.hit && Math.abs(n.time - now) < 250 && (n.pos === pos || n.start === pos));
+    if (hitNote) {
+        hitNote.hit = true;
+        const diff = Math.abs(hitNote.time - now);
+        let img = images.good;
+        if (diff < 60) img = images.perfect;
+        else if (diff < 120) img = images.great;
+        effects.push({ img: img, angle: ANGLES[pos] * Math.PI / 180, startTime: performance.now() });
+    }
+}
+
+function handleInput(e) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const touches = e.touches ? Array.from(e.touches) : [e];
+    touches.forEach(t => {
+        const x = (t.clientX - rect.left) * (800 / rect.width) - 400;
+        const y = (t.clientY - rect.top) * (800 / rect.height) - 400;
+        const angle = Math.atan2(y, x) * 180 / Math.PI;
+        let pos = 0;
+        const normalizedAngle = angle < -78.75 ? angle + 360 : angle;
+        for (let i = 1; i <= 8; i++) {
+            if (Math.abs(normalizedAngle - ANGLES[i]) < 22.5) { pos = i; break; }
+        }
+        if (pos > 0) judge(pos);
+    });
+}
+
+canvas.addEventListener('touchstart', handleInput, {passive: false});
+canvas.addEventListener('mousedown', handleInput);
+
+document.getElementById('start-btn').addEventListener('click', () => {
+    notes = parseSimai(document.getElementById('simai-input').value);
+    effects = [];
+    startTime = performance.now();
+    isPlaying = true;
+    requestAnimationFrame(update);
+});
+
+function parseSimai(text) {
+    const parsed = [];
+    let curTime = 1000;
+    let bpm = 160;
+    let div = 4;
+    const tokens = text.replace(/\s+/g, '').split(',');
+    tokens.forEach(token => {
+        const beatMs = (60 / bpm) * 1000;
+        const unitMs = beatMs * 4 * (1 / div);
+        const sMatch = token.match(/([1-8])([-|>|pp]+)([1-8])\[(\d+):(\d+)\]/);
+        const hMatch = token.match(/([1-8])h\[(\d+):(\d+)\]/);
+        if (sMatch) {
+            const slideDuration = beatMs * 4 * (parseInt(sMatch[5]) / parseInt(sMatch[4]));
+            parsed.push({ type: 'slide', slideType: sMatch[2], time: curTime, start: parseInt(sMatch[1]), end: parseInt(sMatch[3]), wait: beatMs, duration: slideDuration });
+        } else if (hMatch) {
+            const holdDuration = beatMs * 4 * (parseInt(hMatch[3]) / parseInt(hMatch[2]));
+            parsed.push({ type: 'hold', time: curTime, pos: parseInt(hMatch[1]), duration: holdDuration, endTime: curTime + holdDuration });
+        } else if (token.match(/[1-8]/)) {
+            const posList = token.split('/');
+            posList.forEach(p => {
+                const m = p.match(/[1-8]/);
+                if (m) parsed.push({ type: 'tap', time: curTime, pos: parseInt(m[0]), each: posList.length > 1 });
+            });
+        }
+        curTime += unitMs;
+    });
+    return parsed;
+}
+
+function update(now) {
+    if (!isPlaying) return;
+    const elapsed = now - startTime;
+    drawBase();
+
+    notes.forEach(n => {
+        const diff = n.time - elapsed;
+        const sA = ANGLES[n.start || n.pos] * Math.PI / 180;
+        const r = 350;
+
+        if (n.type === 'tap' && !n.hit) {
+            const p = 1 - (diff / APPEAR_DURATION);
+            if (p >= 0 && diff > -200) drawRot(n.each ? images.each : images.tap, 400 + Math.cos(sA)*r*p, 400 + Math.sin(sA)*r*p, sA + Math.PI/2, 80);
+        } 
+        else if (n.type === 'hold') {
+            const pStart = 1 - ((n.time - elapsed) / APPEAR_DURATION);
+            const pEnd = 1 - ((n.endTime - elapsed) / APPEAR_DURATION);
+            
+            if (pStart >= 0 && elapsed <= n.endTime) {
+                const startR = (elapsed < n.time) ? r * pStart : r;
+                const endR = r * Math.max(0, pEnd);
+
+                // --- 改善されたホールド描画ロジック ---
+                ctx.save();
+                ctx.beginPath();
+                ctx.lineWidth = 70; // ホールドの幅
+                ctx.lineCap = "round"; // 先端を丸く
+                ctx.strokeStyle = "rgba(255, 100, 200, 0.8)"; // ホールドの色（仮）
+                
+                // 1. 胴体を太い線で描画
+                ctx.moveTo(400 + Math.cos(sA) * endR, 400 + Math.sin(sA) * endR);
+                ctx.lineTo(400 + Math.cos(sA) * startR, 400 + Math.sin(sA) * startR);
+                ctx.stroke();
+
+                // 2. 先端に画像を重ねる（画像が歪まないように）
+                drawRot(images.hold, 400 + Math.cos(sA) * startR, 400 + Math.sin(sA) * startR, sA + Math.PI/2, 85);
+                ctx.restore();
+            }
+        }
+        else if (n.type === 'slide') {
+            const moveStartTime = n.time + n.wait;
+            if (diff < APPEAR_DURATION && elapsed < moveStartTime + n.duration) {
+                for(let i=1; i<=10; i++) {
+                    const pos = getSlidePos(n, i/10);
+                    drawRot(images.slide, pos.x, pos.y, pos.rot, 50);
+                }
+            }
+            if (elapsed >= n.time && elapsed <= moveStartTime + n.duration) {
+                let p = 0; if (elapsed > moveStartTime) p = Math.min(1, (elapsed - moveStartTime) / n.duration);
+                const sPos = getSlidePos(n, p);
+                drawRot(images.star, sPos.x, sPos.y, elapsed/200, 90);
+            }
+        }
+    });
+
+    effects = effects.filter(e => {
+        const age = (performance.now() - e.startTime) / 1000;
+        if (age > 0.6 || !e.img) return false;
+        const dist = 280;
+        ctx.save();
+        ctx.translate(400 + Math.cos(e.angle)*dist, 400 + Math.sin(e.angle)*dist);
+        ctx.rotate(e.angle + Math.PI/2);
+        ctx.globalAlpha = 1 - (age * 1.5);
+        const w = 120; const h = w * (e.img.height / e.img.width);
+        ctx.drawImage(e.img, -w/2, -h/2, w, h);
+        ctx.restore();
+        return true;
+    });
+
+    requestAnimationFrame(update);
+}
+
+function drawRot(img, x, y, rot, size) {
+    if (!img) return;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+    ctx.drawImage(img, -size/2, -size/2, size, size);
+    ctx.restore();
+}
+
+loadImages();
+</script>
+</body>
+</html>
